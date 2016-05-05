@@ -1,0 +1,21 @@
+{
+  "name": "circlebytes",
+  "version": "0.0.0",
+  "author": "Flaise <x.Flaise@gmail.com>",
+  "description": "Serialize circular references, enumerations, and functions.",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "Flaise/circlebytes"
+  },
+  "scripts": {
+    "test": "mocha --require intelli-espower-loader --ui qunit",
+    "coverage": "istanbul cover ./node_modules/.bin/_mocha -- --require intelli-espower-loader --ui qunit"
+  },
+  "devDependencies": {
+    "intelli-espower-loader": "1.0.1",
+    "istanbul": "0.4.3",
+    "mocha": "2.4.5",
+    "power-assert": "1.3.1"
+  }
+}
