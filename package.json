@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "mocha --require intelli-espower-loader --ui qunit",
-    "coverage": "istanbul cover ./node_modules/.bin/_mocha -- --require intelli-espower-loader --ui qunit"
+    "coverage": "istanbul cover ./node_modules/.bin/_mocha -- --require intelli-espower-loader --ui qunit",
+    "test-watch": "mocha --growl --watch --require intelli-espower-loader --ui qunit --reporter min"
   },
   "devDependencies": {
     "intelli-espower-loader": "1.0.1",
