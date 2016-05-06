@@ -39,11 +39,18 @@ var trees = [
     '\nzxvc',
     'a\nb\nc',
     '@',
-    '#',
+    '@1',
     '@1234',
+    '#',
     '#29',
+    '#-29',
     '#undefined',
     '#true',
+    '|',
+    '->',
+    '||',
+    '|r|',
+    '-',
 
     [],
     [1],
@@ -59,16 +66,44 @@ var trees = [
     {b: [{}, null]},
     [{a: 2}, {r: 'b'}],
 
-    [{'a': 'asdf\nqwer'}, {'d': [], 3: 80, 4: 'z'}, 'r', 'asdf\nqwer']
+    [{'a': 'asdf\nqwer'}, {'d': [], 3: 80, 4: 'z'}, 'r', 'asdf\nqwer'],
+
+    new Map(),
+    new Map([['a', 1]]),
+    new Map([[{}, 2]]),
+    new Map([[{a: 1}, {b: 2}]]),
+
+    [new Map([['a', 'asdf\nqwer']]), new Map([[new Map(), []], [3, 80], [4, 'z']]), 'r',
+     'asdf\nqwer'],
+
+    [undefined, null, Infinity],
+    {a: undefined, b: null, c: Infinity},
+    new Map([[undefined, 1], [null, 2], [Infinity, 3]]),
 ];
 trees = trees.concat(enums);
 
 
 suite('Trees');
 
-trees.forEach(function(data) {
-    test(JSON.stringify(data), function() {
-        assert(typeof serialize(data) === 'string');
+trees.forEach(function(data, index) {
+    test(JSON.stringify(data) + ' (' + index + ')', function() {
+        var serialization = serialize(data);
+        var deserialization = deserialize(serialization);
+
+        assert(typeof serialization === 'string');
+        assert(typeof deserialization === typeof data);
+
+        if (deserialization != null) {
+            assert(deserialization.constructor === data.constructor);
+        }
+
+        if (! /\\n/.test(JSON.stringify(data))) {
+            // No empty lines unless there was a newline in the input data.
+            var lines = serialization.split('\n');
+            lines.forEach(function(line, index) {
+                assert(line.length, '(' + index + ') ' + JSON.stringify(data) + '\n' + serialization);
+            });
+        }
 
         assert.deepEqual(deserialize(serialize(data)), data);
     });
@@ -80,8 +115,8 @@ test('NaN', function() {
 });
 
 
-function countSubstring(str, subStr){
-	var matches = str.match(new RegExp(subStr, 'g'));
+function countSubstring(str, substring) {
+	var matches = str.match(new RegExp(substring, 'g'));
 	return matches? matches.length: 0;
 }
 
@@ -162,5 +197,30 @@ test('Two arrays', function() {
 
     assert(result[0][0] === result);
     assert(result[0][0][0] === result[0]);
+});
+
+test('Recursive map', function() {
+    var a = new Map();
+    a.set('a', a);
+
+    var result = deserialize(serialize(a));
+
+    assert(result.get('a') === result);
+});
+
+test('Two maps', function() {
+    var a = new Map();
+    var b = new Map().set(3, a);
+    a.set(4, b);
+
+    var result = deserialize(serialize(a));
+
+    assert(result.get(4).get(3) === result);
+    assert(result.get(4).get(3).get(4) === result.get(4));
+
+    result = deserialize(serialize(b));
+
+    assert(result.get(3).get(4) === result);
+    assert(result.get(3).get(4).get(3) === result.get(3));
 });
 

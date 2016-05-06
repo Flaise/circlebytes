@@ -48,16 +48,31 @@ function buildRefs2(data, context, builder) {
 
     builder.refs.set(data, ref);
 
-    if (Array.isArray(data)) {
+    if (data == null) return ref;
+
+    if (data.constructor === Map) {
+        var result = ref + ' hash';
+        var entries = data.entries();
+        while(true) {
+            var iteration = entries.next();
+            if (iteration.done) break;
+            var key = iteration.value[0];
+            var value = iteration.value[1];
+            result += '\n' + indentation + buildRefs2(key, context, builder) + ' ' +
+                      buildRefs2(value, context, builder);
+        }
+        builder.lines.push(result);
+    } else if (Array.isArray(data)) {
         var result = [ref + ' list'];
         data.forEach(function(datum) {
             result.push(indentation + buildRefs2(datum, context, builder));
         });
         builder.lines.push.apply(builder.lines, result);
-    } else if (data && typeof data === 'object') {
-        var result = ref + ' hash\n';
+    } else if (typeof data === 'object') {
+        var result = ref + ' jshash';
         Object.keys(data).forEach(function(key) {
-            result += indentation + buildRefs2(key, context, builder) + ' ' + buildRefs2(data[key], context, builder) + '\n';
+            result += '\n' + indentation + buildRefs2(key, context, builder) + ' ' +
+                      buildRefs2(data[key], context, builder);
         });
         builder.lines.push(result);
     } else if (typeof data === 'string') {
@@ -102,7 +117,6 @@ function chunksOf(bytes) {
 
             var segments = line.trim().split(' ');
             if (segments.length === 1) {
-                chunk.ref = undefined;
                 chunk.title = segments[0];
             } else if (segments.length === 2) {
                 chunk.ref = segments[0];
@@ -121,63 +135,51 @@ function chunksOf(bytes) {
 module.exports.deserialize = function deserialize(bytes, context) {
     if (arguments.length < 2) context = defaultContext;
 
-    var refs = {};
+    var refs = Object.create(null);
     var chunks = chunksOf(bytes);
 
-    if (chunks.length === 0) throw new Error('No data.');
-
-    if (chunks.length === 1) {
-        var chunk = chunks[0];
-
-        if (chunk.ref && chunk.ref !== '@') {
-            throw new Error('Root ref must be "@" or omitted.\n' + bytes);
-        }
-
-        var key = mapKeyOf(context, chunk.title);
-        if (key !== mapKeyOf.NOT_FOUND) return key;
-
-        var number = parseFloat(chunk.title);
-        if (!isNaN(number)) return number;
-    }
+    if (chunks.length === 0) throw new Error('No data.\n' + bytes);
 
     chunks.forEach(function(chunk) {
         if (!chunk.ref) {
-            throw new Error('Refs are required when more than one object is present.\n' + bytes);
+            if (chunks.length === 1) {
+                chunk.ref = '@';
+            } else {
+                throw new Error('Refs are required when more than one object is present.\n' + bytes);
+            }
         }
         refs[chunk.ref] = chunk;
 
-        if (chunk.title === 'hash') {
-            chunk.object = {};
-        } else if (chunk.title === 'list') {
-            chunk.object = [];
-        } else if (chunk.title === 'text') {
-            chunk.object = chunk.contents.join('\n');
+        var key = mapKeyOf(context, chunk.title);
+        if (key !== mapKeyOf.NOT_FOUND) {
+            chunk.object = key;
+            return;
+        }
+
+        var number = parseFloat(chunk.title);
+        if (!isNaN(number)) {
+            chunk.object = number;
+            return;
+        }
+
+        if (construct[chunk.title]) {
+            construct[chunk.title](chunk);
         } else {
             throw new Error('No context for "' + chunk.title + '".');
         }
     });
+    if (!refs['@']) throw new Error('Root ref must be "@" or omitted.\n' + bytes);
 
     chunks.forEach(function(chunk) {
-        if (chunk.title === 'hash') {
-            chunk.contents.forEach(function(element) {
-                var kv = element.split(' ');
-                if (kv.length !== 2) {
-                    throw new Error('Expecting key/value pair. Found: ' + element + '\n>>>\n' +
-                                    JSON.stringify(chunk) + '\n>>>\n' + bytes);
-                }
-                var key = kv[0];
-                var value = kv[1];
-
-                key = parseTarget(key, context, refs);
-                if (typeof key !== 'string') throw new Error('Deserializing maps not implemented.');
-                value = parseTarget(value, context, refs);
-
-                chunk.object[key] = value;
+        if (parseLine[chunk.title]) {
+            var elements = chunk.contents.map(function(line) {
+                return parseLine[chunk.title](line, context, refs);
             });
-        } else if (chunk.title === 'list') {
-            chunk.contents.forEach(function(element) {
-                chunk.object.push(parseTarget(element, context, refs));
-            });
+            if (fill[chunk.title]) {
+                elements.forEach(function(element) {
+                    fill[chunk.title](chunk.object, element);
+                });
+            }
         }
     });
 
@@ -196,3 +198,53 @@ function parseTarget(bytes, context, refs) {
 
     throw new Error();
 }
+
+function parseTargetPair(bytes, context, refs) {
+    var kv = bytes.split(' ');
+    if (kv.length !== 2) {
+        throw new Error('Expecting key/value pair. Found: ' + bytes + '\n>>>\n' + bytes);
+    }
+    var key = parseTarget(kv[0], context, refs);
+    var value = parseTarget(kv[1], context, refs);
+    return {key: key, value: value};
+}
+
+
+var construct = Object.create(null);
+var parseLine = Object.create(null);
+var fill = Object.create(null);
+
+
+construct['text'] = function(chunk) {
+    chunk.object = chunk.contents.join('\n');
+};
+
+
+construct['list'] = function(chunk) {
+    chunk.object = [];
+};
+parseLine['list'] = parseTarget;
+fill['list'] = function(object, element) {
+    object.push(element);
+};
+
+
+construct['jshash'] = function(chunk) {
+    chunk.object = {};
+};
+parseLine['jshash'] = parseTargetPair;
+fill['jshash'] = function(object, element) {
+    if (typeof element.key !== 'string') {
+        throw new Error('Javascript objects do not support non-string keys.');
+    }
+    object[element.key] = element.value;
+};
+
+
+construct['hash'] = function(chunk) {
+    chunk.object = new Map();
+};
+parseLine['hash'] = parseTargetPair;
+fill['hash'] = function(object, element) {
+    object.set(element.key, element.value);
+};
