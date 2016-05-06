@@ -4,66 +4,71 @@ var circlebytes = require('../src');
 var serialize = circlebytes.serialize;
 var deserialize = circlebytes.deserialize;
 
+var enums = [
+    true,
+    false,
+    null,
+    undefined,
+    Infinity,
+    -Infinity,
+];
 
-var enums = [true, false, null, undefined, NaN, Infinity, -Infinity];
+var trees = [
+    0,
+    1,
+    -1,
+    1.5,
+    -1.5,
+    1e9000,
+    -1e9000,
+    1/2/2/2/2/2/2/2/2/2/2/2,
 
-var primitives = enums.slice();
-for (var i = -10; i <= 10; i += 1) {
-    primitives.push(i);
-}
-primitives = primitives.concat([.25, 1.25, -.75]);
+    [],
+    [1],
+    [2],
+    [1, 2],
+    ['a', 'b'],
 
-var allTypes = primitives.concat([{}, [], {a: 2}, 'qwer']);
+    {},
 
-var strings = ['', 'asdf', 'qwer', 'qwer\n', '"', "'", '""', '"oiuoi"', '1', '0', '-1', 'NaN', '\n',
-               '\nzxvc', 'a\nb\nc', '@', '#', '@1234', '#29', '#undefined', '#true'];
+    '',
+    'asdf',
+    'qwer',
+    'qwer\n',
+    '"',
+    "'",
+    '""',
+    '"oiuoi"',
+    '1',
+    '0',
+    '-1',
+    'NaN',
+    '\n',
+    '\nzxvc',
+    'a\nb\nc',
+    '@',
+    '#',
+    '@1234',
+    '#29',
+    '#undefined',
+    '#true'
+];
+trees = trees.concat(enums);
 
 
-suite('Serialization');
+suite('Trees');
 
-test('Returns a string', function() {
-    allTypes.forEach(function(data) {
-        var bytes = serialize(data);
-        assert(typeof bytes === 'string', JSON.stringify(data));
+trees.forEach(function(data) {
+    test(JSON.stringify(data), function() {
+        assert(typeof serialize(data) === 'string');
+
+        assert.deepEqual(deserialize(serialize(data)), data);
     });
 });
 
-
-suite('Primitives');
-
-primitives.forEach(function(data) {
-    test(data, function() {
-        if (data !== data) {
-            var result = deserialize(serialize(data));
-            assert(result !== result);
-        } else {
-            assert(data === deserialize(serialize(data)));
-        }
-    });
-});
-
-
-suite('Structures');
-
-test('empty object', function() {
-    assert.deepEqual(deserialize(serialize({})), {});
-});
-
-test('empty array', function() {
-    assert.deepEqual(deserialize(serialize([])), []);
-});
-
-test('empty string', function() {
-    assert.deepEqual(deserialize(serialize('')), '');
-});
-
-
-suite('Strings');
-
-strings.forEach(function(data) {
-    test('"' + data + '"', function() {
-        assert(data === deserialize(serialize(data)));
-    });
+test('NaN', function() {
+    var result = deserialize(serialize(NaN));
+    assert(result !== result);
 });
 
 
