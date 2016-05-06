@@ -2,7 +2,7 @@
 
 var indentation = '    ';
 
-var defaultContext = new Map()
+var defaultContextSerialize = new Map()
     .set(true, 'true')
     .set(false, 'false')
     .set(null, 'null')
@@ -10,21 +10,38 @@ var defaultContext = new Map()
     .set(NaN, 'nan')
     .set(Infinity, 'infinity')
     .set(-Infinity, '-infinity');
-Object.freeze(defaultContext);
+Object.freeze(defaultContextSerialize);
+
+var defaultContextDeserialize = new Map()
+    .set('true', true)
+    .set('false', false)
+    .set('null', null)
+    .set('undefined', void 0)
+    .set('nan', NaN)
+    .set('infinity', Infinity)
+    .set('-infinity', -Infinity);
+Object.freeze(defaultContextDeserialize);
 
 
-function mapKeyOf(source, value) {
+function eachMapEntry(source, callback) {
     var entries = source.entries();
     while (true) {
         var iteration = entries.next();
-        if (iteration.done) return mapKeyOf.NOT_FOUND;
-        if (iteration.value[1] === value) return iteration.value[0];
+        if (iteration.done) return;
+        if (callback(iteration.value[0], iteration.value[1])) return;
     }
 }
-mapKeyOf.NOT_FOUND = Object.freeze(Object.create(null));
+function copyMap(source) {
+    var result = new Map();
+    eachMapEntry(source, function(key, value) {
+        result.set(key, value);
+    });
+    return result;
+}
 
 
-function buildRefs1(data, context, builder) {
+function buildRefs1(data, builder) {
+    var context = builder.refs;
     if (context.has(data)) {
         builder.lines.push(context.get(data));
         return;
@@ -34,13 +51,12 @@ function buildRefs1(data, context, builder) {
         return;
     }
 
-    buildRefs2(data, context, builder);
+    buildRefs2(data, builder);
 }
 
-function buildRefs2(data, context, builder) {
-    if (context.has(data)) return context.get(data);
-    if (Number.isFinite(data)) return data.toString();
+function buildRefs2(data, builder) {
     if (builder.refs.has(data)) return builder.refs.get(data);
+    if (Number.isFinite(data)) return data.toString();
 
     var ref = '@';
     if (builder.nextRef !== 0) ref += builder.nextRef;
@@ -48,45 +64,32 @@ function buildRefs2(data, context, builder) {
 
     builder.refs.set(data, ref);
 
-    if (data == null) return ref;
+    for (var title in transforms) {
+        if (!transforms[title].serialize) continue;
+        var serialization = transforms[title].serialize(data, builder, ref);
+        if (!serialization) continue;
 
-    if (data.constructor === Map) {
-        var result = ref + ' hash';
-        var entries = data.entries();
-        while(true) {
-            var iteration = entries.next();
-            if (iteration.done) break;
-            var key = iteration.value[0];
-            var value = iteration.value[1];
-            result += '\n' + indentation + buildRefs2(key, context, builder) + ' ' +
-                      buildRefs2(value, context, builder);
-        }
-        builder.lines.push(result);
-    } else if (Array.isArray(data)) {
-        var result = [ref + ' list'];
-        data.forEach(function(datum) {
-            result.push(indentation + buildRefs2(datum, context, builder));
-        });
-        builder.lines.push.apply(builder.lines, result);
-    } else if (typeof data === 'object') {
-        var result = ref + ' jshash';
-        Object.keys(data).forEach(function(key) {
-            result += '\n' + indentation + buildRefs2(key, context, builder) + ' ' +
-                      buildRefs2(data[key], context, builder);
-        });
-        builder.lines.push(result);
-    } else if (typeof data === 'string') {
-        builder.lines.push(ref + ' text\n' + indentation + data.split('\n').join('\n' + indentation));
+        builder.lines.push(ref + ' ' + title);
+
+        var lines = serialization.lines.map(function(line) { return indentation + line; });
+        builder.lines.push.apply(builder.lines, lines);
+
+        break;
     }
 
     return ref;
 }
 
-module.exports.serialize = function serialize(data, context) {
-    if (arguments.length < 2) context = defaultContext;
+function buildRefPair(key, value, builder) {
+    return buildRefs2(key, builder) + ' ' + buildRefs2(value, builder);
+}
 
-    var builder = {lines: [], nextRef: 0, refs: new Map()};
-    buildRefs1(data, context, builder);
+
+module.exports.serialize = function serialize(data, context) {
+    if (arguments.length < 2) context = defaultContextSerialize;
+
+    var builder = {lines: [], nextRef: 0, refs: copyMap(context)};
+    buildRefs1(data, builder);
     return builder.lines.join('\n');
 };
 
@@ -133,7 +136,7 @@ function chunksOf(bytes) {
 
 
 module.exports.deserialize = function deserialize(bytes, context) {
-    if (arguments.length < 2) context = defaultContext;
+    if (arguments.length < 2) context = defaultContextDeserialize;
 
     var refs = Object.create(null);
     var chunks = chunksOf(bytes);
@@ -150,9 +153,8 @@ module.exports.deserialize = function deserialize(bytes, context) {
         }
         refs[chunk.ref] = chunk;
 
-        var key = mapKeyOf(context, chunk.title);
-        if (key !== mapKeyOf.NOT_FOUND) {
-            chunk.object = key;
+        if (context.has(chunk.title)) {
+            chunk.object = context.get(chunk.title);
             return;
         }
 
@@ -162,25 +164,25 @@ module.exports.deserialize = function deserialize(bytes, context) {
             return;
         }
 
-        if (construct[chunk.title]) {
-            construct[chunk.title](chunk);
-        } else {
-            throw new Error('No context for "' + chunk.title + '".');
-        }
+        var transform = transforms[chunk.title];
+        if (!transforms[chunk.title]) throw new Error('No context for "' + chunk.title + '".');
+
+        chunk.object = transform.construct(chunk);
     });
     if (!refs['@']) throw new Error('Root ref must be "@" or omitted.\n' + bytes);
 
     chunks.forEach(function(chunk) {
-        if (parseLine[chunk.title]) {
-            var elements = chunk.contents.map(function(line) {
-                return parseLine[chunk.title](line, context, refs);
-            });
-            if (fill[chunk.title]) {
-                elements.forEach(function(element) {
-                    fill[chunk.title](chunk.object, element);
-                });
-            }
-        }
+        var transform = transforms[chunk.title];
+        if (!transform || !transform.parseLine) return;
+
+        var elements = chunk.contents.map(function(line) {
+            return transform.parseLine(line, context, refs);
+        });
+
+        if (!transform.fill) return;
+        elements.forEach(function(element) {
+            transform.fill(chunk.object, element);
+        });
     });
 
     return refs['@'].object;
@@ -190,8 +192,7 @@ function parseTarget(bytes, context, refs) {
     var target = refs[bytes];
     if (target) return target.object;
 
-    var key = mapKeyOf(context, bytes);
-    if (key !== mapKeyOf.NOT_FOUND) return key;
+    if (context.has(bytes)) return context.get(bytes);
 
     var number = parseFloat(bytes);
     if (!isNaN(number)) return number;
@@ -210,41 +211,75 @@ function parseTargetPair(bytes, context, refs) {
 }
 
 
-var construct = Object.create(null);
-var parseLine = Object.create(null);
-var fill = Object.create(null);
+var transforms = Object.create(null);
 
+transforms['text'] = {
+    construct: function(chunk) {
+        return chunk.contents.join('\n');
+    },
+    serialize: function(data, builder) {
+        if (typeof data !== 'string') return;
 
-construct['text'] = function(chunk) {
-    chunk.object = chunk.contents.join('\n');
-};
-
-
-construct['list'] = function(chunk) {
-    chunk.object = [];
-};
-parseLine['list'] = parseTarget;
-fill['list'] = function(object, element) {
-    object.push(element);
-};
-
-
-construct['jshash'] = function(chunk) {
-    chunk.object = {};
-};
-parseLine['jshash'] = parseTargetPair;
-fill['jshash'] = function(object, element) {
-    if (typeof element.key !== 'string') {
-        throw new Error('Javascript objects do not support non-string keys.');
+        return {lines: data.split('\n')};
     }
-    object[element.key] = element.value;
 };
 
+transforms['list'] = {
+    construct: function(chunk) {
+        return [];
+    },
+    parseLine: parseTarget,
+    fill: function(object, element) {
+        object.push(element);
+    },
+    serialize: function(data, builder) {
+        if (!Array.isArray(data)) return;
 
-construct['hash'] = function(chunk) {
-    chunk.object = new Map();
+        return {lines: data.map(function(datum) {
+            return buildRefs2(datum, builder);
+        })};
+    }
 };
-parseLine['hash'] = parseTargetPair;
-fill['hash'] = function(object, element) {
-    object.set(element.key, element.value);
+
+transforms['hash'] = {
+    construct: function(chunk) {
+        return new Map();
+    },
+    parseLine: parseTargetPair,
+    fill: function(object, element) {
+        object.set(element.key, element.value);
+    },
+    serialize: function(data, builder) {
+        if (!data || data.constructor !== Map) return;
+
+        var lines = [];
+        var entries = data.entries();
+        while(true) {
+            var iteration = entries.next();
+            if (iteration.done) break;
+            lines.push(buildRefPair(iteration.value[0], iteration.value[1], builder));
+        }
+        return {lines: lines};
+    }
+};
+
+// requires `transforms` to observe ordering to keep from using jshash when hash was intended
+transforms['jshash'] = {
+    construct: function(chunk) {
+        return {};
+    },
+    parseLine: parseTargetPair,
+    fill: function(object, element) {
+        if (typeof element.key !== 'string') {
+            throw new Error('Javascript objects do not support non-string keys.');
+        }
+        object[element.key] = element.value;
+    },
+    serialize: function(data, builder) {
+        if (!data || typeof data !== 'object') return;
+
+        return {lines: Object.keys(data).map(function(key) {
+            return buildRefPair(key, data[key], builder);
+        })};
+    }
 };
