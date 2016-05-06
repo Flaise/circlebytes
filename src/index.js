@@ -55,9 +55,9 @@ function buildRefs2(data, context, builder) {
         });
         builder.lines.push.apply(builder.lines, result);
     } else if (data && typeof data === 'object') {
-        var result = ref + ' hash';
+        var result = ref + ' hash\n';
         Object.keys(data).forEach(function(key) {
-            result += indentation + buildRefs(data[key], context, builder) + '\n';
+            result += indentation + buildRefs2(key, context, builder) + ' ' + buildRefs2(data[key], context, builder) + '\n';
         });
         builder.lines.push(result);
     } else if (typeof data === 'string') {
@@ -159,30 +159,40 @@ module.exports.deserialize = function deserialize(bytes, context) {
 
     chunks.forEach(function(chunk) {
         if (chunk.title === 'hash') {
+            chunk.contents.forEach(function(element) {
+                var kv = element.split(' ');
+                if (kv.length !== 2) {
+                    throw new Error('Expecting key/value pair. Found: ' + element + '\n>>>\n' +
+                                    JSON.stringify(chunk) + '\n>>>\n' + bytes);
+                }
+                var key = kv[0];
+                var value = kv[1];
 
+                key = parseTarget(key, context, refs);
+                if (typeof key !== 'string') throw new Error('Deserializing maps not implemented.');
+                value = parseTarget(value, context, refs);
+
+                chunk.object[key] = value;
+            });
         } else if (chunk.title === 'list') {
             chunk.contents.forEach(function(element) {
-                var target = refs[element];
-                if (target) {
-                    chunk.object.push(target.object);
-                } else {
-                    var key = mapKeyOf(context, element);
-                    if (key !== mapKeyOf.NOT_FOUND) {
-                        chunk.object.push(key);
-                        return;
-                    }
-
-                    var number = parseFloat(element);
-                    if (!isNaN(number)) {
-                        chunk.object.push(number);
-                        return;
-                    }
-
-                    throw new Error();
-                }
+                chunk.object.push(parseTarget(element, context, refs));
             });
         }
     });
 
     return refs['@'].object;
 };
+
+function parseTarget(bytes, context, refs) {
+    var target = refs[bytes];
+    if (target) return target.object;
+
+    var key = mapKeyOf(context, bytes);
+    if (key !== mapKeyOf.NOT_FOUND) return key;
+
+    var number = parseFloat(bytes);
+    if (!isNaN(number)) return number;
+
+    throw new Error();
+}
