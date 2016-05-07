@@ -2,38 +2,10 @@
 
 var indentation = '    ';
 
-var defaultContextSerialize = new Map()
-    .set(true, 'true')
-    .set(false, 'false')
-    .set(null, 'null')
-    .set(void 0, 'undefined')
-    .set(NaN, 'nan')
-    .set(Infinity, 'infinity')
-    .set(-Infinity, '-infinity');
+function serialize(data, _builder) {
+    var builder = _builder;
+    if (!builder) builder = {lines: [], nextRef: 0, refs: new Map()};
 
-var defaultContextDeserialize = {
-    true: true,
-    false: false,
-    null: null,
-    undefined: void 0,
-    nan: NaN,
-    infinity: Infinity,
-    '-infinity': -Infinity,
-};
-
-
-function copyMap(source) {
-    var result = new Map();
-    var entries = source.entries();
-    while (true) {
-        var iteration = entries.next();
-        if (iteration.done) return result;
-        result.set(iteration.value[0], iteration.value[1]);
-    }
-}
-
-
-function build(data, builder) {
     for (var i = 0; i < transforms.length; i += 1) {
         var transform = transforms[i];
 
@@ -52,26 +24,18 @@ function build(data, builder) {
             builder.lines.push(ref + ' ' + transform.title);
             lines = lines.map(function(line) { return indentation + line; });
             builder.lines.push.apply(builder.lines, lines);
-            return ref;
+
+            if (_builder) {
+                return ref;
+            } else {
+                return builder.lines.join('\n');
+            }
         }
     }
 
     throw new Error();
 }
-
-function buildPair(key, value, builder) {
-    return build(key, builder) + ' ' + build(value, builder);
-}
-
-
-module.exports.serialize = function serialize(data, context) {
-    if (arguments.length < 2) context = defaultContextSerialize;
-    var builder = {lines: [], nextRef: 0, refs: copyMap(context)};
-
-    var inlinement = build(data, builder);
-    if (builder.nextRef === 0) return inlinement;
-    return builder.lines.join('\n');
-};
+module.exports.serialize = serialize;
 
 
 function chunksOf(bytes) {
@@ -115,13 +79,11 @@ function chunksOf(bytes) {
 }
 
 
-module.exports.deserialize = function deserialize(bytes, context) {
-    if (arguments.length < 2) context = defaultContextDeserialize;
-
+module.exports.deserialize = function deserialize(bytes) {
     var chunks = chunksOf(bytes);
     if (chunks.length === 0) throw new Error('No data.\n' + bytes);
 
-    var refs = Object.create(context);
+    var refs = Object.create(null);
 
     chunks.forEach(function(chunk) {
         if (!chunk.ref) {
@@ -131,64 +93,64 @@ module.exports.deserialize = function deserialize(bytes, context) {
                 throw new Error('Refs are required when more than one object is present.\n' + bytes);
             }
         }
-
-        for (var i = 0; i < transforms.length; i += 1) {
-            var transform = transforms[i];
-
-            if (transform.inline && transform.decodesInline(chunk.title, refs)) {
-                chunk.object = transform.constructInline(chunk.title, refs);
-                refs[chunk.ref] = chunk.object;
-                return;
-            }
-            if (transform.title === chunk.title) {
-                chunk.object = transform.construct(chunk);
-                chunk.transform = transform;
-                refs[chunk.ref] = chunk.object;
-                return;
-            }
-        }
-
-        throw new Error('No transform found for "' + chunk.title + '".\n' + bytes);
+        chunk.object = parse(chunk, refs);
+        refs[chunk.ref] = chunk.object;
     });
     if (!('@' in refs)) {
         throw new Error('Root ref must be "@" or omitted.\n' + bytes + '\n' + JSON.stringify(refs));
     }
 
     chunks.forEach(function(chunk) {
-        var transform = chunk.transform;
-        if (!transform || !transform.parseLine) return;
-
-        chunk.contents
-            .map(function(line) {
-                return transform.parseLine(line, refs);
-            }).forEach(function(element) {
-                transform.fill(chunk.object, element);
-            });
+        unpackChunk(chunk, refs);
     });
 
     return refs['@'];
 };
 
 
-function parse(bytes, refs) {
+function parse(chunk, refs) {
+    var title = chunk.title;
+    if (typeof title !== 'string') throw new Error(JSON.stringify(chunk));
+
     for (var i = 0; i < transforms.length; i += 1) {
         var transform = transforms[i];
 
-        if (transform.inline && transform.decodesInline(bytes, refs)) {
-            return transform.constructInline(bytes, refs);
+        if (transform.inline && transform.decodesInline(title, refs)) {
+            return transform.constructInline(title, refs);
+        }
+
+        if (transform.title === title) {
+            chunk.transform = transform;
+            return transform.construct(chunk);
         }
     }
 
-    throw new Error('No transform found for ' + bytes);
+    throw new Error('No transform found for "' + chunk.title + '".');
+}
+
+function unpackChunk(chunk, refs) {
+    var transform = chunk.transform;
+    if (!transform || !transform.parseLine) return;
+
+    chunk.contents
+        .map(function(line) {
+            return transform.parseLine({title: line}, refs);
+        }).forEach(function(element) {
+            transform.fill(chunk.object, element);
+        });
+}
+
+function serializePair(key, value, builder) {
+    return serialize(key, builder) + ' ' + serialize(value, builder);
 }
 
 function parsePair(bytes, refs) {
-    var kv = bytes.split(' ');
+    var kv = bytes.title.split(' ');
     if (kv.length !== 2) {
         throw new Error('Expecting key/value pair. Found: ' + bytes + '\n>>>\n' + bytes);
     }
-    var key = parse(kv[0], refs);
-    var value = parse(kv[1], refs);
+    var key = parse({title: kv[0]}, refs);
+    var value = parse({title: kv[1]}, refs);
     return {key: key, value: value};
 }
 
@@ -197,6 +159,7 @@ var transforms = [];
 
 
 transforms.push({
+    title: 'reference',
     inline: true,
 
     decodesInline: function(bytes, refs) {
@@ -214,8 +177,37 @@ transforms.push({
     },
 });
 
+function enumTransform(identifier, value) {
+    return {
+        inline: true,
+
+        decodesInline: function(bytes, refs) {
+            return bytes === identifier;
+        },
+        constructInline: function(bytes, refs) {
+            return value;
+        },
+
+        matches: function(data, builder) {
+            if (value !== value && data !== data) return true;
+            return data === value;
+        },
+        serialize: function(data, builder) {
+            return identifier;
+        },
+    };
+}
+
+transforms.push(enumTransform('true', true));
+transforms.push(enumTransform('false', false));
+transforms.push(enumTransform('null', null));
+transforms.push(enumTransform('undefined', void 0));
+transforms.push(enumTransform('infinity', Infinity));
+transforms.push(enumTransform('-infinity', -Infinity));
+transforms.push(enumTransform('nan', NaN));
 
 transforms.push({
+    title: 'number',
     inline: true,
 
     decodesInline: function(bytes) {
@@ -264,7 +256,7 @@ transforms.push({
     },
     serialize: function(data, builder) {
         return data.map(function(datum) {
-            return build(datum, builder);
+            return serialize(datum, builder);
         });
     }
 });
@@ -289,7 +281,7 @@ transforms.push({
         while(true) {
             var iteration = entries.next();
             if (iteration.done) break;
-            lines.push(buildPair(iteration.value[0], iteration.value[1], builder));
+            lines.push(serializePair(iteration.value[0], iteration.value[1], builder));
         }
         return lines;
     }
@@ -315,7 +307,7 @@ transforms.push({
     },
     serialize: function(data, builder) {
         return Object.keys(data).map(function(key) {
-            return buildPair(key, data[key], builder);
+            return serializePair(key, data[key], builder);
         });
     }
 });
