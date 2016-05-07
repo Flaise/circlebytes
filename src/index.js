@@ -11,14 +11,15 @@ var defaultContextSerialize = new Map()
     .set(Infinity, 'infinity')
     .set(-Infinity, '-infinity');
 
-var defaultContextDeserialize = new Map()
-    .set('true', true)
-    .set('false', false)
-    .set('null', null)
-    .set('undefined', void 0)
-    .set('nan', NaN)
-    .set('infinity', Infinity)
-    .set('-infinity', -Infinity);
+var defaultContextDeserialize = {
+    true: true,
+    false: false,
+    null: null,
+    undefined: void 0,
+    nan: NaN,
+    infinity: Infinity,
+    '-infinity': -Infinity,
+};
 
 
 function copyMap(source) {
@@ -33,12 +34,10 @@ function copyMap(source) {
 
 
 function build(data, builder) {
-    if (builder.refs.has(data)) return builder.refs.get(data);
-
     for (var i = 0; i < transforms.length; i += 1) {
         var transform = transforms[i];
 
-        if (!transform.matches(data)) continue;
+        if (!transform.matches(data, builder)) continue;
 
         if (transform.inline) {
             return transform.serialize(data, builder);
@@ -67,9 +66,6 @@ function buildPair(key, value, builder) {
 
 module.exports.serialize = function serialize(data, context) {
     if (arguments.length < 2) context = defaultContextSerialize;
-
-    if (context.has(data)) return context.get(data);
-
     var builder = {lines: [], nextRef: 0, refs: copyMap(context)};
 
     var inlinement = build(data, builder);
@@ -122,11 +118,10 @@ function chunksOf(bytes) {
 module.exports.deserialize = function deserialize(bytes, context) {
     if (arguments.length < 2) context = defaultContextDeserialize;
 
-    var refs = Object.create(null);
     var chunks = chunksOf(bytes);
-
     if (chunks.length === 0) throw new Error('No data.\n' + bytes);
-    if (chunks.length === 1 && context.has(chunks[0].title)) return context.get(chunks[0].title);
+
+    var refs = Object.create(context);
 
     chunks.forEach(function(chunk) {
         if (!chunk.ref) {
@@ -136,59 +131,64 @@ module.exports.deserialize = function deserialize(bytes, context) {
                 throw new Error('Refs are required when more than one object is present.\n' + bytes);
             }
         }
-        refs[chunk.ref] = chunk;
 
         for (var i = 0; i < transforms.length; i += 1) {
             var transform = transforms[i];
 
-            if ((transform.decodes && transform.decodes(chunk)) || transform.title === chunk.title) {
+            if (transform.inline && transform.decodesInline(chunk.title, refs)) {
+                chunk.object = transform.constructInline(chunk.title, refs);
+                refs[chunk.ref] = chunk.object;
+                return;
+            }
+            if (transform.title === chunk.title) {
                 chunk.object = transform.construct(chunk);
                 chunk.transform = transform;
+                refs[chunk.ref] = chunk.object;
                 return;
             }
         }
 
         throw new Error('No transform found for "' + chunk.title + '".\n' + bytes);
     });
-    if (!refs['@']) throw new Error('Root ref must be "@" or omitted.\n' + bytes);
+    if (!('@' in refs)) {
+        throw new Error('Root ref must be "@" or omitted.\n' + bytes + '\n' + JSON.stringify(refs));
+    }
 
     chunks.forEach(function(chunk) {
         var transform = chunk.transform;
         if (!transform || !transform.parseLine) return;
 
-        var elements = chunk.contents.map(function(line) {
-            return transform.parseLine(line, context, refs);
-        });
-
-        if (!transform.fill) return;
-        elements.forEach(function(element) {
-            transform.fill(chunk.object, element);
-        });
+        chunk.contents
+            .map(function(line) {
+                return transform.parseLine(line, refs);
+            }).forEach(function(element) {
+                transform.fill(chunk.object, element);
+            });
     });
 
-    return refs['@'].object;
+    return refs['@'];
 };
 
 
-function parse(bytes, context, refs) {
-    var target = refs[bytes];
-    if (target) return target.object;
+function parse(bytes, refs) {
+    for (var i = 0; i < transforms.length; i += 1) {
+        var transform = transforms[i];
 
-    if (context.has(bytes)) return context.get(bytes);
+        if (transform.inline && transform.decodesInline(bytes, refs)) {
+            return transform.constructInline(bytes, refs);
+        }
+    }
 
-    var number = parseFloat(bytes);
-    if (!isNaN(number)) return number;
-
-    throw new Error();
+    throw new Error('No transform found for ' + bytes);
 }
 
-function parsePair(bytes, context, refs) {
+function parsePair(bytes, refs) {
     var kv = bytes.split(' ');
     if (kv.length !== 2) {
         throw new Error('Expecting key/value pair. Found: ' + bytes + '\n>>>\n' + bytes);
     }
-    var key = parse(kv[0], context, refs);
-    var value = parse(kv[1], context, refs);
+    var key = parse(kv[0], refs);
+    var value = parse(kv[1], refs);
     return {key: key, value: value};
 }
 
@@ -199,17 +199,35 @@ var transforms = [];
 transforms.push({
     inline: true,
 
-    decodes: function(chunk) {
-        return !isNaN(parseFloat(chunk.title));
+    decodesInline: function(bytes, refs) {
+        return bytes in refs;
     },
-    construct: function(chunk) {
-        return parseFloat(chunk.title);
+    constructInline: function(bytes, refs) {
+        return refs[bytes];
+    },
+
+    matches: function(data, builder) {
+        return builder.refs.has(data);
+    },
+    serialize: function(data, builder) {
+        return builder.refs.get(data);
+    },
+});
+
+
+transforms.push({
+    inline: true,
+
+    decodesInline: function(bytes) {
+        return !isNaN(parseFloat(bytes));
+    },
+    constructInline: function(bytes) {
+        return parseFloat(bytes);
     },
 
     matches: function(data) {
         return Number.isFinite(data);
     },
-
     serialize: function(data, builder) {
         return data.toString();
     },
@@ -286,7 +304,8 @@ transforms.push({
     parseLine: parsePair,
     fill: function(object, element) {
         if (typeof element.key !== 'string') {
-            throw new Error('Javascript objects do not support non-string keys.');
+            throw new Error('Javascript objects do not support non-string keys. ' +
+                            JSON.stringify(element.key));
         }
         object[element.key] = element.value;
     },
