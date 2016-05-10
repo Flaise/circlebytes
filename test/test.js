@@ -230,3 +230,29 @@ test('Two maps', function() {
     assert(result.get(3).get(4).get(3) === result.get(3));
 });
 
+
+suite('Unparsable');
+
+var unparsables = [
+    '&',
+    '@',
+    '    1',
+    '@1 list',
+    '',
+    '1\n2',
+    'jshash\n    1 2',
+    'hash\n    1',
+    'hash\n    1 2 3',
+    'hash 1',
+    '@ hash 1',
+    'wat',
+    'list\n 1',
+];
+
+unparsables.forEach(function(unparsable) {
+    test('"' + unparsable + '"', function() {
+        assert.throws(function() {
+            deserialize(unparsable);
+        });
+    });
+});

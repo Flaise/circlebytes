@@ -105,7 +105,6 @@ module.exports.deserialize = function deserialize(bytes) {
 
 function parse(chunk, refs) {
     var title = chunk.title;
-    if (typeof title !== 'string') throw new Error(JSON.stringify(chunk));
 
     for (var i = 0; i < transforms.length; i += 1) {
         var transform = transforms[i];
