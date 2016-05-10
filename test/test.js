@@ -256,3 +256,18 @@ unparsables.forEach(function(unparsable) {
         });
     });
 });
+
+test('No transforms', function() {
+    assert.throws(function() {
+        deserialize('1', []);
+    });
+});
+
+
+suite('Unserializables');
+
+test('No transforms', function() {
+    assert.throws(function() {
+        serialize(1, []);
+    });
+});

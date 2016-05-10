@@ -4,10 +4,15 @@ var indentation = '    ';
 
 function serialize(data, _builder) {
     var builder = _builder;
-    if (!builder) builder = {lines: [], nextRef: 0, refs: new Map()};
+    if (Array.isArray(builder)) {
+        builder = {lines: [], nextRef: 0, refs: new Map(), transforms: _builder};
+    } else if (!builder) {
+        builder = {lines: [], nextRef: 0, refs: new Map(),
+                   transforms: module.exports.defaultTransforms};
+    }
 
-    for (var i = 0; i < transforms.length; i += 1) {
-        var transform = transforms[i];
+    for (var i = 0; i < builder.transforms.length; i += 1) {
+        var transform = builder.transforms[i];
 
         if (!transform.matches(data, builder)) continue;
 
@@ -74,7 +79,9 @@ function chunksOf(bytes) {
 }
 
 
-module.exports.deserialize = function deserialize(bytes) {
+module.exports.deserialize = function deserialize(bytes, transforms) {
+    if (!transforms) transforms = module.exports.defaultTransforms;
+
     var chunks = chunksOf(bytes);
     if (chunks.length === 0) throw new Error('No data.\n' + bytes);
 
@@ -88,7 +95,7 @@ module.exports.deserialize = function deserialize(bytes) {
                 throw new Error('Refs are required when more than one object is present.\n' + bytes);
             }
         }
-        chunk.object = parse(chunk, refs);
+        chunk.object = parse(chunk, refs, transforms);
         refs[chunk.ref] = chunk.object;
     });
     if (!('@' in refs)) {
@@ -96,14 +103,14 @@ module.exports.deserialize = function deserialize(bytes) {
     }
 
     chunks.forEach(function(chunk) {
-        unpackChunk(chunk, refs);
+        unpackChunk(chunk, refs, transforms);
     });
 
     return refs['@'];
 };
 
 
-function parse(chunk, refs) {
+function parse(chunk, refs, transforms) {
     var title = chunk.title;
 
     for (var i = 0; i < transforms.length; i += 1) {
@@ -122,13 +129,13 @@ function parse(chunk, refs) {
     throw new Error('No transform found for "' + chunk.title + '".');
 }
 
-function unpackChunk(chunk, refs) {
+function unpackChunk(chunk, refs, transforms) {
     var transform = chunk.transform;
     if (!transform || !transform.parseLine) return;
 
     chunk.contents
         .map(function(line) {
-            return transform.parseLine({title: line}, refs);
+            return transform.parseLine({title: line}, refs, transforms);
         }).forEach(function(element) {
             transform.fill(chunk.object, element);
         });
@@ -138,22 +145,18 @@ function serializePair(key, value, builder) {
     return serialize(key, builder) + ' ' + serialize(value, builder);
 }
 
-function parsePair(bytes, refs) {
+function parsePair(bytes, refs, transforms) {
     var kv = bytes.title.split(' ');
     if (kv.length !== 2) {
         throw new Error('Expecting key/value pair. Found: ' + bytes + '\n>>>\n' + bytes);
     }
-    var key = parse({title: kv[0]}, refs);
-    var value = parse({title: kv[1]}, refs);
+    var key = parse({title: kv[0]}, refs, transforms);
+    var value = parse({title: kv[1]}, refs, transforms);
     return {key: key, value: value};
 }
 
 
-var transforms = [];
-
-
-transforms.push({
-    title: 'reference',
+module.exports.reference = {
     inline: true,
 
     decodesInline: function(bytes, refs) {
@@ -169,7 +172,7 @@ transforms.push({
     serialize: function(data, builder) {
         return builder.refs.get(data);
     },
-});
+};
 
 function enumTransform(identifier, value) {
     return {
@@ -192,16 +195,15 @@ function enumTransform(identifier, value) {
     };
 }
 
-transforms.push(enumTransform('true', true));
-transforms.push(enumTransform('false', false));
-transforms.push(enumTransform('null', null));
-transforms.push(enumTransform('undefined', void 0));
-transforms.push(enumTransform('infinity', Infinity));
-transforms.push(enumTransform('-infinity', -Infinity));
-transforms.push(enumTransform('nan', NaN));
+module.exports.enumTrue = enumTransform('true', true);
+module.exports.enumFalse = enumTransform('false', false);
+module.exports.enumNull = enumTransform('null', null);
+module.exports.enumUndefined = enumTransform('undefined', void 0);
+module.exports.enumInfinity = enumTransform('infinity', Infinity);
+module.exports.enumNegativeInfinity = enumTransform('-infinity', -Infinity);
+module.exports.enumNaN = enumTransform('nan', NaN);
 
-transforms.push({
-    title: 'number',
+module.exports.number = {
     inline: true,
 
     decodesInline: function(bytes) {
@@ -217,9 +219,9 @@ transforms.push({
     serialize: function(data, builder) {
         return data.toString();
     },
-});
+};
 
-transforms.push({
+module.exports.text = {
     title: 'text',
 
     construct: function(chunk) {
@@ -232,9 +234,9 @@ transforms.push({
     serialize: function(data, builder) {
         return data.split('\n');
     }
-});
+};
 
-transforms.push({
+module.exports.list = {
     title: 'list',
 
     construct: function(chunk) {
@@ -253,9 +255,9 @@ transforms.push({
             return serialize(datum, builder);
         });
     }
-});
+};
 
-transforms.push({
+module.exports.hash = {
     title: 'hash',
 
     construct: function(chunk) {
@@ -279,9 +281,9 @@ transforms.push({
         }
         return lines;
     }
-});
+};
 
-transforms.push({
+module.exports.jshash = {
     title: 'jshash',
 
     construct: function(chunk) {
@@ -304,4 +306,21 @@ transforms.push({
             return serializePair(key, data[key], builder);
         });
     }
-});
+};
+
+
+module.exports.defaultTransforms = Object.freeze([
+    module.exports.reference,
+    module.exports.enumTrue,
+    module.exports.enumFalse,
+    module.exports.enumNull,
+    module.exports.enumUndefined,
+    module.exports.enumInfinity,
+    module.exports.enumNegativeInfinity,
+    module.exports.enumNaN,
+    module.exports.number,
+    module.exports.text,
+    module.exports.list,
+    module.exports.hash,
+    module.exports.jshash,
+]);
