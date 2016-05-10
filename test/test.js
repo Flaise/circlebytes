@@ -52,12 +52,48 @@ var trees = [
     '->',
     '||',
     '|r|',
+    ' |r|',
+    '|r| ',
+    ' | r | ',
     '-',
     ' ',
     '  ',
     '   ',
     '    ',
     '    \n',
+    '~',
+    '~~',
+    '!',
+    '`',
+    '<',
+    '>',
+    '/',
+    '\\',
+    '{',
+    '}',
+    '{}',
+    '-',
+    '--',
+    '_',
+    '__',
+    '+',
+    '=',
+    '(',
+    ')',
+    '()',
+    '[',
+    ']',
+    '[]',
+    '*',
+    '&',
+    '^',
+    '%',
+    '$',
+    ';',
+    ':',
+    '.',
+    ',',
+    '?',
 
     [],
     [1],
@@ -72,6 +108,12 @@ var trees = [
     {a: []},
     {b: [{}, null]},
     [{a: 2}, {r: 'b'}],
+    {'': 1},
+    {' ': 2},
+    {' \n ': 3},
+    {' a ': ' b '},
+    {'|qwer|': 9},
+    {r: ' r '},
 
     [{'a': 'asdf\nqwer'}, {'d': [], 3: 80, 4: 'z'}, 'r', 'asdf\nqwer'],
 
@@ -130,25 +172,6 @@ test('Long string reuse', function() {
     var result = serialize({a: 'qwer\nasdf', b: 'qwer\nasdf'});
     assert(countSubstring(result, 'qwer') === 1);
     assert(countSubstring(result, 'asdf') === 1);
-});
-
-
-suite('Custom Context');
-
-test.skip('Serializing unhandled enum values', function() {
-    enums.forEach(function(data) {
-        assert.throws(function() {
-            serialize(data, {});
-        });
-    });
-});
-
-test.skip('Deserializing unhandled enum values', function() {
-    enums.forEach(function(data) {
-        assert.throws(function() {
-            deserialize(serialize(data), {});
-        });
-    });
 });
 
 
@@ -247,6 +270,17 @@ var unparsables = [
     '@ hash 1',
     'wat',
     'list\n 1',
+    ' list',
+    'list ',
+    'list hash',
+    '@ list hash',
+    '@ hash\n    12',
+    '@ hash\n    |1|2',
+    '@ hash\n    1|2|',
+    '@ hash\n    |1||2|',
+    '@ hash\n    |a||b|',
+    '1|2|',
+    '|2|1',
 ];
 
 unparsables.forEach(function(unparsable) {
@@ -269,5 +303,32 @@ suite('Unserializables');
 test('No transforms', function() {
     assert.throws(function() {
         serialize(1, []);
+    });
+});
+
+
+suite('Short strings');
+
+var shortStrings = [
+    'a',
+    '1',
+    'd',
+    'nnnnnn',
+    'askdfjhasldkjfhalksj',
+    'SDKgkfjshkj#@I*F&(SD&F',
+    '',
+    '"',
+    "'",
+    '""',
+    '"asdf"',
+    "'asdf'",
+    ' ',
+    'a a',
+    ' r ',
+];
+
+shortStrings.forEach(function(st) {
+    test('"' + st + '"', function() {
+        assert(serialize(st) === '|' + st + '|');
     });
 });

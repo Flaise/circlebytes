@@ -62,14 +62,16 @@ function chunksOf(bytes) {
             chunk = {};
             result.push(chunk);
 
-            var segments = line.trim().split(' ');
-            if (segments.length === 1) {
-                chunk.title = segments[0];
-            } else if (segments.length === 2) {
-                chunk.ref = segments[0];
-                chunk.title = segments[1];
+            if (line[0] === '@') {
+                var segments = line.split(' ');
+                if (segments.length === 2) {
+                    chunk.ref = segments[0];
+                    chunk.title = segments[1];
+                } else {
+                    throw new Error('Syntax error: "' + line + '" line: ' + lineNumber);
+                }
             } else {
-                throw new Error('Syntax error: "' + line + '" line: ' + lineNumber);
+                chunk.title = line;
             }
 
             chunk.contents = [];
@@ -145,13 +147,30 @@ function serializePair(key, value, builder) {
     return serialize(key, builder) + ' ' + serialize(value, builder);
 }
 
+
+var stringReg = /^\|[^\n]*?\|/;
 function parsePair(bytes, refs, transforms) {
-    var kv = bytes.title.split(' ');
-    if (kv.length !== 2) {
-        throw new Error('Expecting key/value pair. Found: ' + bytes + '\n>>>\n' + bytes);
+    var key, value;
+
+    var match = stringReg.exec(bytes.title);
+    if (match) {
+        key = match[0];
+
+        if (bytes.title[key.length] !== ' ') {
+            throw new Error('Expecting key/value pair. Found: ' + bytes.title);
+        }
+
+        var rest = bytes.title.substr(key.length + 1);
+        value = rest;
+    } else {
+        var kv = bytes.title.split(' ');
+        if (kv.length !== 2) throw new Error('Expecting key/value pair. Found: ' + bytes.title);
+        key = kv[0];
+        value = kv[1];
     }
-    var key = parse({title: kv[0]}, refs, transforms);
-    var value = parse({title: kv[1]}, refs, transforms);
+
+    key = parse({title: key}, refs, transforms);
+    value = parse({title: value}, refs, transforms);
     return {key: key, value: value};
 }
 
@@ -207,7 +226,9 @@ module.exports.number = {
     inline: true,
 
     decodesInline: function(bytes) {
-        return !isNaN(parseFloat(bytes));
+        var parsed = parseFloat(bytes);
+        if (isNaN(parsed)) return false;
+        return ('' + parsed).length === bytes.length;
     },
     constructInline: function(bytes) {
         return parseFloat(bytes);
@@ -218,6 +239,26 @@ module.exports.number = {
     },
     serialize: function(data, builder) {
         return data.toString();
+    },
+};
+
+var shortTextReg = /^\|[^\n]*\|$/;
+module.exports.shortText = {
+    inline: true,
+
+    decodesInline: function(bytes) {
+        return shortTextReg.test(bytes);
+    },
+    constructInline: function(bytes) {
+        return bytes.substring(1, bytes.length - 1);
+    },
+
+    matches: function(data) {
+        return typeof data === 'string' && data.length < 50 && data.indexOf('\n') < 0
+            && data.indexOf('|') < 0;
+    },
+    serialize: function(data, builder) {
+        return '|' + data.toString() + '|';
     },
 };
 
@@ -319,6 +360,7 @@ module.exports.defaultTransforms = Object.freeze([
     module.exports.enumNegativeInfinity,
     module.exports.enumNaN,
     module.exports.number,
+    module.exports.shortText,
     module.exports.text,
     module.exports.list,
     module.exports.hash,
