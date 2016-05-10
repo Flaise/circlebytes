@@ -38,7 +38,7 @@ function serialize(data, _builder) {
         }
     }
 
-    throw new Error();
+    throw new Error('No transform found for "' + data + '".');
 }
 module.exports.serialize = serialize;
 
