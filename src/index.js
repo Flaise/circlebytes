@@ -131,13 +131,25 @@ function parse(chunk, refs, transforms) {
     throw new Error('No transform found for "' + chunk.title + '".');
 }
 
+function parseInline(bytes, refs, transforms) {
+    for (var i = 0; i < transforms.length; i += 1) {
+        var transform = transforms[i];
+
+        if (transform.inline && transform.decodesInline(bytes, refs)) {
+            return transform.constructInline(bytes, refs);
+        }
+    }
+
+    throw new Error('No inline transform found for "' + chunk.title + '".');
+}
+
 function unpackChunk(chunk, refs, transforms) {
     var transform = chunk.transform;
     if (!transform || !transform.parseLine) return;
 
     chunk.contents
         .map(function(line) {
-            return transform.parseLine({title: line}, refs, transforms);
+            return transform.parseLine(line, refs, transforms);
         }).forEach(function(element) {
             transform.fill(chunk.object, element);
         });
@@ -152,25 +164,22 @@ var stringReg = /^\|[^\n]*?\|/;
 function parsePair(bytes, refs, transforms) {
     var key, value;
 
-    var match = stringReg.exec(bytes.title);
+    var match = stringReg.exec(bytes);
     if (match) {
         key = match[0];
 
-        if (bytes.title[key.length] !== ' ') {
-            throw new Error('Expecting key/value pair. Found: ' + bytes.title);
-        }
+        if (bytes[key.length] !== ' ') throw new Error('Expecting key/value pair. Found: ' + bytes);
 
-        var rest = bytes.title.substr(key.length + 1);
-        value = rest;
+        value = bytes.substr(key.length + 1);
     } else {
-        var kv = bytes.title.split(' ');
-        if (kv.length !== 2) throw new Error('Expecting key/value pair. Found: ' + bytes.title);
+        var kv = bytes.split(' ');
+        if (kv.length !== 2) throw new Error('Expecting key/value pair. Found: ' + bytes);
         key = kv[0];
         value = kv[1];
     }
 
-    key = parse({title: key}, refs, transforms);
-    value = parse({title: value}, refs, transforms);
+    key = parseInline(key, refs, transforms);
+    value = parseInline(value, refs, transforms);
     return {key: key, value: value};
 }
 
@@ -283,7 +292,7 @@ module.exports.list = {
     construct: function(chunk) {
         return [];
     },
-    parseLine: parse,
+    parseLine: parseInline,
     fill: function(object, element) {
         object.push(element);
     },

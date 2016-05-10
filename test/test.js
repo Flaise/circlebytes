@@ -297,6 +297,12 @@ test('No transforms', function() {
     });
 });
 
+test('No inline transforms', function() {
+    assert.throws(function() {
+        deserialize('@ list\n    1', [circlebytes.list]);
+    });
+});
+
 
 suite('Unserializables');
 
