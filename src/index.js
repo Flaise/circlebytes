@@ -52,11 +52,6 @@ function chunksOf(bytes) {
             if (!chunk) throw new Error('Indentation error on line ' + lineNumber);
 
             line = line.substr(indentation.length);
-
-            if (line.startsWith(' ')) {
-                throw new Error('Line ' + lineNumber + ' must be indented 0 or 4 spaces.\n' + bytes);
-            }
-
             chunk.contents.push(line);
         } else {
             chunk = {};
