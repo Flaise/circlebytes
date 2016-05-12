@@ -296,6 +296,11 @@ var unparsables = [
     '  2',
     '   3',
     '    4',
+    '@ list\n    1 2',
+    '@ list\n    @3',
+    '@ hash\n    @3 4',
+    '@ jshash\n    1',
+    '@ jshash\n    1 2 3',
 ];
 
 unparsables.forEach(function(unparsable) {
