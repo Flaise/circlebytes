@@ -48,6 +48,11 @@ var trees = [
     '#-29',
     '#undefined',
     '#true',
+    '#\n',
+    '#\na',
+    'a\n#',
+    '\na#',
+    '\na # r',
     '|',
     '->',
     '||',
@@ -302,6 +307,8 @@ var unparsables = [
     '@ jshash\n    1 2 3',
     '#c',
     '1#c',
+    '@ text\n    a\n # r',
+    '@ text\n    a\n  # r',
 ];
 
 unparsables.forEach(function(unparsable) {
@@ -380,6 +387,13 @@ var parsables = [
     ['#asdf\n4', 4],
     ['5\n#asdf', 5],
     ['@ hash #r\n    #b\n    1 2', new Map([[1, 2]])],
+    ['##\n6', 6],
+    ['7 ##', 7],
+    ['8 # #', 8],
+    ['9 # a#', 9],
+    ['#\n10', 10],
+    ['@ text\n    a\n# r', 'a'],
+    ['@ text\n    a\n    # r', 'a\n# r'],
 ];
 
 parsables.forEach(function(pair) {
