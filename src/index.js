@@ -75,31 +75,35 @@ function chunksOf(bytes) {
     return result;
 }
 
-function nextInlineChunkOf(tokens, refs, transforms) {
-    for (var i = 0; i < transforms.length; i += 1) {
-        var transform = transforms[i];
-
-        if (!transform.inlineChunk) continue;
-        var chunk = transform.inlineChunk(tokens, refs);
-        if (!chunk) continue;
-        return chunk;
-    }
-}
-
 function inlineChunksOf(bytes, refs, transforms) {
     var result = [];
-    var tokens = bytes.split(' ');
 
-    while (tokens.length) {
-        var prevLength = tokens.length;
-
-        var chunk = nextInlineChunkOf(tokens, refs, transforms);
-        if (!chunk) {
-            throw new Error('No transform found for "' + bytes + '". Remainder: [' + tokens + ']');
+    var opener;
+    for (var i = 0; i < bytes.length; i += 1) {
+        if (bytes[i] === '|') {
+            if (opener == null) opener = i;
+            for (var j = i + 1; j < bytes.length; j += 1) {
+                if (bytes[j] === '|') {
+                    if (bytes[j + 1] !== ' ' && j !== bytes.length - 1) break;
+                    result.push({title: bytes.substring(i, j + 1)});
+                    i = j;
+                    opener = undefined;
+                    break;
+                }
+            }
+        } else if (bytes[i] === ' ') {
+            if (opener != null) {
+                result.push({title: bytes.substring(opener, i)});
+                opener = undefined;
+            }
+        } else if (opener == null) {
+            opener = i;
         }
-        result.push(chunk);
-        if (tokens.length === prevLength) throw new Error();
     }
+    if (opener != null) {
+        result.push({title: bytes.substring(opener)});
+    }
+
     return result;
 }
 
@@ -111,6 +115,24 @@ module.exports.deserialize = function deserialize(bytes, transforms) {
 
     var refs = Object.create(null);
 
+    processAll(chunks, refs, transforms);
+    chunks.forEach(function(chunk) {
+        chunk.contents.forEach(function(line) {
+            var lineChunks = inlineChunksOf(line, refs, transforms);
+            processAll(lineChunks, refs, transforms);
+            chunk.transform.appendToChunk(chunk, lineChunks);
+        });
+    });
+
+    if (chunks.length === 1 && chunks[0].ref == null) return chunks[0].object;
+
+    if (!('@' in refs)) {
+        throw new Error('Root ref must be "@" or omitted.\n' + bytes + '\n' + JSON.stringify(refs));
+    }
+    return refs['@'];
+};
+
+function processAll(chunks, refs, transforms) {
     chunks.forEach(function(chunk) {
         for (var i = 0; i < transforms.length; i += 1) {
             var transform = transforms[i];
@@ -126,33 +148,19 @@ module.exports.deserialize = function deserialize(bytes, transforms) {
 
         throw new Error('No transform found for "' + chunk.title + '".');
     });
-    chunks.forEach(function(chunk) {
-        chunk.contents.forEach(function(line) {
-            chunk.transform.appendToChunk(chunk, inlineChunksOf(line, refs, transforms));
-        });
-    });
-
-    if (chunks.length === 1 && chunks[0].ref == null) return chunks[0].object;
-
-    if (!('@' in refs)) {
-        throw new Error('Root ref must be "@" or omitted.\n' + bytes + '\n' + JSON.stringify(refs));
-    }
-    return refs['@'];
-};
+}
 
 function serializePair(key, value, builder) {
     return serialize(key, builder) + ' ' + serialize(value, builder);
 }
 
 module.exports.reference = {
-    inlineChunk: function(tokens, refs) {
-        if (tokens[0][0] === '@') {
-            var title = tokens.shift();
-            if (!(title in refs)) throw new Error();
-            return {object: refs[title], title: title};
+    objectOfChunk: function(chunk, refs) {
+        if (chunk.title[0] === '@') {
+            if (!(chunk.title in refs)) throw new Error();
+            return {object: refs[chunk.title], title: chunk.title};
         }
     },
-    objectOfChunk: function(chunk, refs) {},
 
     matches: function(data, builder) {
         return builder.refs.has(data);
@@ -164,10 +172,6 @@ module.exports.reference = {
 
 function enumTransform(identifier, value) {
     return {
-        inlineChunk: function(tokens) {
-            if (tokens[0] === identifier) return {object: value, title: tokens.shift()};
-        },
-
         objectOfChunk: function(chunk, refs) {
             if (chunk.title === identifier) return {object: value};
         },
@@ -191,13 +195,6 @@ module.exports.enumNegativeInfinity = enumTransform('-infinity', -Infinity);
 module.exports.enumNaN = enumTransform('nan', NaN);
 
 module.exports.number = {
-    inlineChunk: function(tokens) {
-        var parsed = parseFloat(tokens[0]);
-        if (isNaN(parsed)) return;
-        if (('' + parsed).length !== tokens[0].length) return;
-        return {object: parsed, title: tokens.shift()};
-    },
-
     objectOfChunk: function(chunk, refs) {
         var parsed = parseFloat(chunk.title);
         if (isNaN(parsed)) return;
@@ -215,16 +212,6 @@ module.exports.number = {
 
 var shortTextReg = /^\|([^\n|]*?)\|$/;
 module.exports.shortText = {
-    inlineChunk: function(tokens) {
-        for (var i = 1; i <= tokens.length; i += 1) {
-            var bytes = tokens.slice(0, i).join(' ');
-            var match = shortTextReg.exec(bytes);
-            if (!match) continue;
-            tokens.splice(0, i);
-            return {object: match[1], title: match[0]};
-        }
-    },
-
     objectOfChunk: function(chunk, refs) {
         var match = shortTextReg.exec(chunk.title);
         if (match) return {object: match[1]};
@@ -261,7 +248,7 @@ module.exports.list = {
         if (chunk.title === 'list') return {object: []};
     },
     appendToChunk: function(chunk, row) {
-        if (row.length !== 1) throw new Error('Expected a single value. Found: ' + row);
+        if (row.length !== 1) throw new Error('list--append expected a single value. Found: ' + JSON.stringify(row));
         chunk.object.push(row[0].object);
     },
 
@@ -280,7 +267,7 @@ module.exports.hash = {
         if (chunk.title === 'hash') return {object: new Map()};
     },
     appendToChunk: function(chunk, row) {
-        if (row.length !== 2) throw new Error('Expected a key/value pair. Found: ' + row);
+        if (row.length !== 2) throw new Error('hash--append expected a key/value pair. Found: ' + JSON.stringify(row));
         chunk.object.set(row[0].object, row[1].object);
     },
 
@@ -304,7 +291,9 @@ module.exports.jshash = {
         if (chunk.title === 'jshash') return {object: {}};
     },
     appendToChunk: function(chunk, row) {
-        if (row.length !== 2) throw new Error('Expected a key/value pair. Found: ' + row);
+        if (row.length !== 2) {
+            throw new Error('jshash--append expected a key/value pair. Found: ' + JSON.stringify(row));
+        }
         if (typeof row[0].object !== 'string') {
             throw new Error('Javascript objects do not support non-string keys: ' +
                             JSON.stringify(row[0].object));
@@ -322,7 +311,6 @@ module.exports.jshash = {
     }),
 };
 
-
 function serializeContainer(title, ser) {
     return function(data, builder) {
         var ref = '@';
@@ -339,7 +327,6 @@ function serializeContainer(title, ser) {
         return ref;
     };
 }
-
 
 module.exports.defaultTransforms = Object.freeze([
     module.exports.reference,
