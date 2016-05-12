@@ -39,18 +39,6 @@ function chunkShellOf(line) {
     return chunk;
 }
 
-var commentReg = /(^|\s+)#.*$/;
-function withoutComment(line) {
-    var commentMatch = commentReg.exec(line);
-    if (commentMatch) {
-        var result = line.substring(0, commentMatch.index);
-        var matchGroup = commentMatch[0];
-        if (commentMatch.index === 0 && /\s/.test(matchGroup[0])) return line;
-        return result;
-    }
-    return line;
-}
-
 function chunksOf(bytes) {
     var lines = bytes.split('\n');
     var result = [];
@@ -59,6 +47,7 @@ function chunksOf(bytes) {
 
     while (lines.length) {
         var line = lines.shift();
+        if (line[0] === '#') continue;
         if (!line.length) {
             blankLines += 1;
             continue;
@@ -72,9 +61,6 @@ function chunksOf(bytes) {
             }
             chunk.contents.push(line.substr(indentation.length));
         } else {
-            line = withoutComment(line);
-            if (!line.length) continue;
-
             chunk = chunkShellOf(line);
             result.push(chunk);
         }
@@ -124,10 +110,6 @@ module.exports.deserialize = function deserialize(bytes, transforms) {
     processAll(chunks, refs, transforms);
     chunks.forEach(function(chunk) {
         chunk.contents.forEach(function(line) {
-            if (!chunk.transform.disablesComments) {
-                line = withoutComment(line);
-                if (!line.length) return;
-            }
             var lineChunks = inlineChunksOf(line, refs, transforms);
             processAll(lineChunks, refs, transforms);
             chunk.transform.appendToChunk(chunk, lineChunks);
@@ -256,7 +238,6 @@ module.exports.list = {
         chunk.object.push(row[0].object);
     },
 
-    disablesComments: true,
     serialize: serializeContainer(
         'list',
         function(data, builder) {

@@ -309,6 +309,14 @@ var unparsables = [
     '1#c',
     '@ text\n    a\n # r',
     '@ text\n    a\n  # r',
+
+    '7 ##',
+    '8 # #',
+    '9 # a#',
+    '1 #',
+    '2 #asdf',
+    '3 # asdf wewefsdf',
+    '@ hash #r\n    #b\n    1 2',
 ];
 
 unparsables.forEach(function(unparsable) {
@@ -381,16 +389,11 @@ var parsables = [
     ['1\n', 1],
     ['\n1\n', 1],
     ['@ jshash\n    |a| @1\n\n@1 text\n    asdf\n\n', {a: 'asdf'}],
-    ['1 #', 1],
-    ['2 #asdf', 2],
-    ['3 # asdf wewefsdf', 3],
+    ['@ jshash\n#\n    |a| 1', {a: 1}],
+    ['@ jshash\n# qwer\n    |a| 1', {a: 1}],
     ['#asdf\n4', 4],
     ['5\n#asdf', 5],
-    ['@ hash #r\n    #b\n    1 2', new Map([[1, 2]])],
     ['##\n6', 6],
-    ['7 ##', 7],
-    ['8 # #', 8],
-    ['9 # a#', 9],
     ['#\n10', 10],
     ['@ text\n    a\n# r', 'a'],
     ['@ text\n    a\n    # r', 'a\n# r'],
