@@ -2,28 +2,20 @@
 
 var indentation = '    ';
 
-function Builder(transforms) {
-    return {
-        lines: [],
-        nextRef: 0,
-        refs: new Map(),
-        transforms: transforms || module.exports.defaultTransforms
-    };
-}
-
 function serialize(data, builder) {
     for (var i = 0; i < builder.transforms.length; i += 1) {
-        var transform = builder.transforms[i];
-
-        if (!transform.matches(data, builder)) continue;
-        return transform.serialize(data, builder);
+        var serialization = builder.transforms[i].serialize(data, builder);
+        if (serialization) return serialization.value;
     }
 
     throw new Error('No transform found for "' + data + '".');
 }
 
 module.exports.serialize = function(data, transforms) {
-    var builder = Builder(transforms);
+    var builder = {lines: [],
+                   nextRef: 0,
+                   refs: new Map(),
+                   transforms: transforms || module.exports.defaultTransforms};
     var inlinement = serialize(data, builder);
     if (!builder.lines.length) return inlinement;
     return builder.lines.join('\n');
@@ -141,7 +133,7 @@ function processAll(chunks, refs, transforms) {
             if (!decoded) continue;
 
             chunk.transform = transform;
-            chunk.object = decoded.object;
+            chunk.object = decoded.value;
             if (chunk.ref) refs[chunk.ref] = chunk.object;
             return;
         }
@@ -158,30 +150,23 @@ module.exports.reference = {
     objectOfChunk: function(chunk, refs) {
         if (chunk.title[0] === '@') {
             if (!(chunk.title in refs)) throw new Error();
-            return {object: refs[chunk.title], title: chunk.title};
+            return {value: refs[chunk.title]};
         }
     },
 
-    matches: function(data, builder) {
-        return builder.refs.has(data);
-    },
     serialize: function(data, builder) {
-        return builder.refs.get(data);
+        if (builder.refs.has(data)) return {value: builder.refs.get(data)};
     },
 };
 
 function enumTransform(identifier, value) {
     return {
         objectOfChunk: function(chunk, refs) {
-            if (chunk.title === identifier) return {object: value};
+            if (chunk.title === identifier) return {value: value};
         },
 
-        matches: function(data, builder) {
-            if (value !== value && data !== data) return true;
-            return data === value;
-        },
         serialize: function(data, builder) {
-            return identifier;
+            if (data === value || ((value !== value) && (data !== data))) return {value: identifier};
         },
     };
 }
@@ -199,14 +184,11 @@ module.exports.number = {
         var parsed = parseFloat(chunk.title);
         if (isNaN(parsed)) return;
         if (('' + parsed).length !== chunk.title.length) return;
-        return {object: parsed};
+        return {value: parsed};
     },
 
-    matches: function(data) {
-        return Number.isFinite(data);
-    },
     serialize: function(data, builder) {
-        return data.toString();
+        if (Number.isFinite(data)) return {value: data.toString()};
     },
 };
 
@@ -214,81 +196,89 @@ var shortTextReg = /^\|([^\n|]*?)\|$/;
 module.exports.shortText = {
     objectOfChunk: function(chunk, refs) {
         var match = shortTextReg.exec(chunk.title);
-        if (match) return {object: match[1]};
+        if (match) return {value: match[1]};
     },
 
-    matches: function(data) {
-        return typeof data === 'string' && data.length < 50 && data.indexOf('\n') < 0
-            && data.indexOf('|') < 0;
-    },
     serialize: function(data, builder) {
-        return '|' + data.toString() + '|';
+        if (typeof data === 'string' && data.length <= 50 && data.indexOf('\n') < 0
+                && data.indexOf('|') < 0) {
+            return {value: '|' + data.toString() + '|'};
+        }
     },
 };
 
 module.exports.text = {
     objectOfChunk: function(chunk, refs) {
         if (chunk.title === 'text') {
-            var result = {object: chunk.contents.join('\n')};
+            var result = {value: chunk.contents.join('\n')};
             chunk.contents.length = 0; // empties list
             return result;
         }
     },
 
-    matches: function(data) {
-        return typeof data === 'string';
-    },
-    serialize: serializeContainer('text', function(data, builder) {
-        return data.split('\n');
-    }),
+    serialize: serializeContainer(
+        'text',
+        function(data, builder) {
+            return data.split('\n');
+        },
+        function(data) {
+            return typeof data === 'string';
+        }
+    ),
 };
 
 module.exports.list = {
     objectOfChunk: function(chunk, refs) {
-        if (chunk.title === 'list') return {object: []};
+        if (chunk.title === 'list') return {value: []};
     },
     appendToChunk: function(chunk, row) {
         if (row.length !== 1) throw new Error('list--append expected a single value. Found: ' + JSON.stringify(row));
         chunk.object.push(row[0].object);
     },
 
-    matches: function(data) {
-        return Array.isArray(data);
-    },
-    serialize: serializeContainer('list', function(data, builder) {
-        return data.map(function(datum) {
-            return serialize(datum, builder);
-        });
-    }),
+    serialize: serializeContainer(
+        'list',
+        function(data, builder) {
+            return data.map(function(datum) {
+                return serialize(datum, builder);
+            });
+        },
+        function(data) {
+            return Array.isArray(data);
+        }
+    ),
 };
 
 module.exports.hash = {
     objectOfChunk: function(chunk, refs) {
-        if (chunk.title === 'hash') return {object: new Map()};
+        if (chunk.title === 'hash') return {value: new Map()};
     },
     appendToChunk: function(chunk, row) {
         if (row.length !== 2) throw new Error('hash--append expected a key/value pair. Found: ' + JSON.stringify(row));
         chunk.object.set(row[0].object, row[1].object);
     },
 
-    matches: function(data) {
-        return data && data.constructor === Map;
-    },
-    serialize: serializeContainer('hash', function(data, builder) {
-        var lines = [];
-        var entries = data.entries();
-        while (true) {
-            var iteration = entries.next();
-            if (iteration.done) break;
-            lines.push(serializePair(iteration.value[0], iteration.value[1], builder));
+    serialize: serializeContainer(
+        'hash',
+        function(data, builder) {
+            var lines = [];
+            var entries = data.entries();
+            while (true) {
+                var iteration = entries.next();
+                if (iteration.done) break;
+                lines.push(serializePair(iteration.value[0], iteration.value[1], builder));
+            }
+            return lines;
+        },
+        function(data) {
+            return data instanceof Map;
         }
-        return lines;
-    }),
+    ),
 };
 
 module.exports.jshash = {
     objectOfChunk: function(chunk, refs) {
-        if (chunk.title === 'jshash') return {object: {}};
+        if (chunk.title === 'jshash') return {value: {}};
     },
     appendToChunk: function(chunk, row) {
         if (row.length !== 2) {
@@ -301,18 +291,23 @@ module.exports.jshash = {
         chunk.object[row[0].object] = row[1].object;
     },
 
-    matches: function(data) {
-        return data && typeof data === 'object';
-    },
-    serialize: serializeContainer('jshash', function(data, builder) {
-        return Object.keys(data).map(function(key) {
-            return serializePair(key, data[key], builder);
-        });
-    }),
+    serialize: serializeContainer(
+        'jshash',
+        function(data, builder) {
+            return Object.keys(data).map(function(key) {
+                return serializePair(key, data[key], builder);
+            });
+        },
+        function(data) {
+            return data;
+        }
+    ),
 };
 
-function serializeContainer(title, ser) {
-    return function(data, builder) {
+function serializeContainer(title, ser, matches) {
+    return function serializeWrapper(data, builder) {
+        if (!matches(data)) return;
+
         var ref = '@';
         if (builder.nextRef !== 0) ref += builder.nextRef;
         builder.nextRef += 1;
@@ -324,7 +319,7 @@ function serializeContainer(title, ser) {
         lines.forEach(function(line) {
             builder.lines.push(indentation + line);
         });
-        return ref;
+        return {value: ref};
     };
 }
 
