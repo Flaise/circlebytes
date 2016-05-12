@@ -218,6 +218,7 @@ test('Two arrays', function() {
     a.push(b);
 
     var result = deserialize(serialize(a));
+    assert(Array.isArray(result));
 
     assert(result[0][0] === result);
     assert(result[0][0][0] === result[0]);
@@ -233,6 +234,7 @@ test('Recursive map', function() {
     a.set('a', a);
 
     var result = deserialize(serialize(a));
+    assert(result && result.constructor === Map);
 
     assert(result.get('a') === result);
 });
@@ -243,6 +245,7 @@ test('Two maps', function() {
     a.set(4, b);
 
     var result = deserialize(serialize(a));
+    assert(result && result.constructor === Map);
 
     assert(result.get(4).get(3) === result);
     assert(result.get(4).get(3).get(4) === result.get(4));
@@ -259,9 +262,14 @@ suite('Unparsable');
 var unparsables = [
     '&',
     '@',
-    '    1',
     '@1 list',
     '',
+    '\n',
+    '\n\n',
+    ' ',
+    '  ',
+    '   ',
+    '    ',
     '1\n2',
     'jshash\n    1 2',
     'hash\n    1',
@@ -281,13 +289,23 @@ var unparsables = [
     '@ hash\n    |a||b|',
     '1|2|',
     '|2|1',
+    '|a||b|',
+    '|a|b|',
+    '@ text\n    r\n\n    r',
+    ' 1',
+    '  2',
+    '   3',
+    '    4',
 ];
 
 unparsables.forEach(function(unparsable) {
     test('"' + unparsable + '"', function() {
-        assert.throws(function() {
-            deserialize(unparsable);
-        });
+        try {
+            var result = deserialize(unparsable);
+        } catch(err) {
+            return;
+        }
+        throw new Error('Missing expected exception. Returned: ' + util.inspect(result));
     });
 });
 
