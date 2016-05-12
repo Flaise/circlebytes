@@ -21,7 +21,6 @@ module.exports.serialize = function(data, transforms) {
     return builder.lines.join('\n');
 };
 
-
 function chunkShellOf(line) {
     var chunk = {contents: []};
 
@@ -40,6 +39,7 @@ function chunkShellOf(line) {
     return chunk;
 }
 
+var commentReg = /(^|\s)+#.*$/;
 function chunksOf(bytes) {
     var lines = bytes.split('\n');
     var result = [];
@@ -48,6 +48,11 @@ function chunksOf(bytes) {
 
     while (lines.length) {
         var line = lines.shift();
+        var commentMatch = commentReg.exec(line);
+        if (commentMatch) {
+            line = line.substring(0, commentMatch.index);
+            if (!line.length) continue;
+        }
         if (!line.length) {
             blankLines += 1;
             continue;

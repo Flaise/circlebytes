@@ -300,6 +300,8 @@ var unparsables = [
     '@ hash\n    @3 4',
     '@ jshash\n    1',
     '@ jshash\n    1 2 3',
+    '#c',
+    '1#c',
 ];
 
 unparsables.forEach(function(unparsable) {
@@ -371,7 +373,13 @@ var parsables = [
     ['\n1', 1],
     ['1\n', 1],
     ['\n1\n', 1],
-    ['@ jshash\n    |a| @1\n\n@1 text\n    asdf\n\n', {a: 'asdf'}]
+    ['@ jshash\n    |a| @1\n\n@1 text\n    asdf\n\n', {a: 'asdf'}],
+    ['1 #', 1],
+    ['2 #asdf', 2],
+    ['3 # asdf wewefsdf', 3],
+    ['#asdf\n4', 4],
+    ['5\n#asdf', 5],
+    ['@ hash #r\n    #b\n    1 2', new Map([[1, 2]])],
 ];
 
 parsables.forEach(function(pair) {
