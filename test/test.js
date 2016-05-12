@@ -291,7 +291,6 @@ var unparsables = [
     '|2|1',
     '|a||b|',
     '|a|b|',
-    '@ text\n    r\n\n    r',
     ' 1',
     '  2',
     '   3',
@@ -359,5 +358,26 @@ var shortStrings = [
 shortStrings.forEach(function(st) {
     test('"' + st + '"', function() {
         assert(serialize(st) === '|' + st + '|');
+    });
+});
+
+
+suite('Parsables');
+
+var parsables = [
+    ['@ text\n    r\n\n    r', 'r\n\nr'],
+    ['@ text\n', ''],
+    ['@ text\n    r\n', 'r'],
+    ['\n1', 1],
+    ['1\n', 1],
+    ['\n1\n', 1],
+    ['@ jshash\n    |a| @1\n\n@1 text\n    asdf\n\n', {a: 'asdf'}]
+];
+
+parsables.forEach(function(pair) {
+    var parsable = pair[0];
+    var expectation = pair[1];
+    test('"' + parsable + '"', function() {
+        assert.deepEqual(deserialize(parsable), expectation);
     });
 });

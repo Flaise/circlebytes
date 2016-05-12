@@ -44,25 +44,27 @@ function chunksOf(bytes) {
     var lines = bytes.split('\n');
     var result = [];
     var chunk;
-    var end = false;
+    var blankLines = 0;
 
     while (lines.length) {
         var line = lines.shift();
         if (!line.length) {
-            end = true;
+            blankLines += 1;
             continue;
-        } else if (end) {
-            throw new Error();
         }
 
         if (line.startsWith(indentation)) {
             if (!chunk) throw new Error('Indentation error on line ' + lineNumber);
 
+            for (var i = 0; i < blankLines; i += 1) {
+                chunk.contents.push('');
+            }
             chunk.contents.push(line.substr(indentation.length));
         } else {
             chunk = chunkShellOf(line);
             result.push(chunk);
         }
+        blankLines = 0;
     }
     return result;
 }
@@ -211,7 +213,7 @@ module.exports.text = {
     objectOfChunk: function(chunk, refs) {
         if (chunk.title === 'text') {
             var result = {value: chunk.contents.join('\n')};
-            chunk.contents.length = 0; // empties list
+            chunk.contents.length = 0; // empties list so appendToChunk() is not called
             return result;
         }
     },
@@ -232,7 +234,9 @@ module.exports.list = {
         if (chunk.title === 'list') return {value: []};
     },
     appendToChunk: function(chunk, row) {
-        if (row.length !== 1) throw new Error('list--append expected a single value. Found: ' + JSON.stringify(row));
+        if (row.length !== 1) {
+            throw new Error('list--append expected a single value. Found: ' + JSON.stringify(row));
+        }
         chunk.object.push(row[0].object);
     },
 
@@ -254,7 +258,9 @@ module.exports.hash = {
         if (chunk.title === 'hash') return {value: new Map()};
     },
     appendToChunk: function(chunk, row) {
-        if (row.length !== 2) throw new Error('hash--append expected a key/value pair. Found: ' + JSON.stringify(row));
+        if (row.length !== 2) {
+            throw new Error('hash--append expected a key/value pair. Found: ' + JSON.stringify(row));
+        }
         chunk.object.set(row[0].object, row[1].object);
     },
 
@@ -282,7 +288,8 @@ module.exports.jshash = {
     },
     appendToChunk: function(chunk, row) {
         if (row.length !== 2) {
-            throw new Error('jshash--append expected a key/value pair. Found: ' + JSON.stringify(row));
+            throw new Error('jshash--append expected a key/value pair. Found: ' +
+                            JSON.stringify(row));
         }
         if (typeof row[0].object !== 'string') {
             throw new Error('Javascript objects do not support non-string keys: ' +
