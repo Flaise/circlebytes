@@ -21,24 +21,6 @@ module.exports.serialize = function(data, transforms) {
     return builder.lines.join('\n');
 };
 
-function chunkShellOf(line) {
-    var chunk = {contents: []};
-
-    if (line[0] === '@') {
-        var segments = line.split(' ');
-        if (segments.length === 2) {
-            chunk.ref = segments[0];
-            chunk.title = segments[1];
-        } else {
-            throw new Error('Syntax error: "' + line + '"');
-        }
-    } else {
-        chunk.title = line;
-    }
-
-    return chunk;
-}
-
 function chunksOf(bytes) {
     var lines = bytes.split('\n');
     var result = [];
@@ -61,7 +43,7 @@ function chunksOf(bytes) {
             }
             chunk.contents.push(line.substr(indentation.length));
         } else {
-            chunk = chunkShellOf(line);
+            chunk = {title: line, contents: []};
             result.push(chunk);
         }
         blankLines = 0;
@@ -126,20 +108,23 @@ module.exports.deserialize = function deserialize(bytes, transforms) {
 
 function processAll(chunks, refs, transforms) {
     chunks.forEach(function(chunk) {
-        for (var i = 0; i < transforms.length; i += 1) {
-            var transform = transforms[i];
-
-            var decoded = transform.objectOfChunk(chunk, refs);
-            if (!decoded) continue;
-
-            chunk.transform = transform;
-            chunk.object = decoded.value;
-            if (chunk.ref) refs[chunk.ref] = chunk.object;
-            return;
-        }
-
-        throw new Error('No transform found for "' + chunk.title + '".');
+        process(chunk, refs, transforms);
     });
+}
+
+function process(chunk, refs, transforms) {
+    for (var i = 0; i < transforms.length; i += 1) {
+        var transform = transforms[i];
+
+        var decoded = transform.objectOfChunk(chunk, refs, transforms);
+        if (!decoded) continue;
+
+        if (!chunk.transform) chunk.transform = transform;
+        chunk.object = decoded.value;
+        return decoded.value;
+    }
+
+    throw new Error('No transform found for "' + chunk.title + '".');
 }
 
 function serializePair(key, value, builder) {
@@ -147,10 +132,22 @@ function serializePair(key, value, builder) {
 }
 
 module.exports.reference = {
-    objectOfChunk: function(chunk, refs) {
+    objectOfChunk: function(chunk, refs, transforms) {
         if (chunk.title[0] === '@') {
-            if (!(chunk.title in refs)) throw new Error('No object found for ref ' + chunk.title);
-            return {value: refs[chunk.title]};
+            var rt = chunk.title.split(' ');
+            if (rt.length == 2) {
+                chunk.ref = rt[0];
+                chunk.title = rt[1];
+
+                var result = process(chunk, refs, transforms);
+                refs[chunk.ref] = result;
+                return {value: result};
+            } else if (rt.length === 1) {
+                if (!(chunk.title in refs)) throw new Error('No object found for ref ' + chunk.title);
+                return {value: refs[chunk.title]};
+            } else {
+                throw new Error('Syntax error: "' + chunk.title + '".');
+            }
         }
     },
 
